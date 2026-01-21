@@ -1,70 +1,156 @@
+import { getSupabaseClient } from '@/template';
 import { Location, Geofence } from '@/types';
-import { mockLocations } from './mockData';
+import * as ExpoLocation from 'expo-location';
 
 class LocationService {
-  private locations: Record<string, Location> = {};
-  private geofences: Geofence[] = [];
+  private supabase = getSupabaseClient();
 
-  constructor() {
-    // Initialize with mock data
-    mockLocations.forEach(loc => {
-      this.locations[loc.userId] = loc;
+  async requestPermissions(): Promise<boolean> {
+    const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
+    return status === 'granted';
+  }
+
+  async getCurrentLocation(): Promise<{ latitude: number; longitude: number; accuracy: number }> {
+    const location = await ExpoLocation.getCurrentPositionAsync({
+      accuracy: ExpoLocation.Accuracy.High,
     });
-  }
 
-  async getLocation(userId: string): Promise<Location | null> {
-    return this.locations[userId] || null;
-  }
-
-  async getAllLocations(): Promise<Location[]> {
-    return Object.values(this.locations);
-  }
-
-  async updateLocation(
-    userId: string,
-    latitude: number,
-    longitude: number,
-    accuracy?: number
-  ): Promise<Location> {
-    const location: Location = {
-      userId,
-      latitude,
-      longitude,
-      timestamp: new Date(),
-      accuracy,
+    return {
+      latitude: location.coords.latitude,
+      longitude: location.coords.longitude,
+      accuracy: location.coords.accuracy || 0,
     };
+  }
 
-    this.locations[userId] = location;
-    return location;
+  async updateLocation(userId: string, latitude: number, longitude: number, accuracy?: number): Promise<void> {
+    // Get user's ghost mode status
+    const { data: profile } = await this.supabase
+      .from('user_profiles')
+      .select('ghost_mode')
+      .eq('id', userId)
+      .single();
+
+    const { error } = await this.supabase
+      .from('locations')
+      .insert({
+        user_id: userId,
+        latitude,
+        longitude,
+        accuracy,
+        is_ghost_mode: profile?.ghost_mode || false,
+      });
+
+    if (error) throw error;
+  }
+
+  async getFriendLocations(userId: string): Promise<Location[]> {
+    // Get user's friends
+    const { data: relationships } = await this.supabase
+      .from('relationships')
+      .select('related_user_id')
+      .eq('user_id', userId);
+
+    if (!relationships || relationships.length === 0) return [];
+
+    const friendIds = relationships.map(r => r.related_user_id);
+
+    // Get latest location for each friend (not in ghost mode)
+    const locations: Location[] = [];
+    
+    for (const friendId of friendIds) {
+      const { data } = await this.supabase
+        .from('locations')
+        .select('*')
+        .eq('user_id', friendId)
+        .eq('is_ghost_mode', false)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (data) {
+        locations.push({
+          userId: data.user_id,
+          latitude: data.latitude,
+          longitude: data.longitude,
+          timestamp: new Date(data.created_at),
+          accuracy: data.accuracy,
+          address: data.address,
+        });
+      }
+    }
+
+    return locations;
   }
 
   async getGeofences(userId: string): Promise<Geofence[]> {
-    return this.geofences.filter(g => g.userId === userId);
+    const { data, error } = await this.supabase
+      .from('geofences')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('enabled', true);
+
+    if (error) throw error;
+
+    return (data || []).map(g => ({
+      id: g.id,
+      name: g.name,
+      latitude: g.latitude,
+      longitude: g.longitude,
+      radius: g.radius,
+      userId: g.user_id,
+      enabled: g.enabled,
+    }));
   }
 
   async createGeofence(
+    userId: string,
     name: string,
     latitude: number,
     longitude: number,
-    radius: number,
-    userId: string
+    radius: number
   ): Promise<Geofence> {
-    const geofence: Geofence = {
-      id: `geofence-${Date.now()}`,
-      name,
-      latitude,
-      longitude,
-      radius,
-      userId,
-      enabled: true,
-    };
+    const { data, error } = await this.supabase
+      .from('geofences')
+      .insert({
+        user_id: userId,
+        name,
+        latitude,
+        longitude,
+        radius,
+        enabled: true,
+      })
+      .select()
+      .single();
 
-    this.geofences.push(geofence);
-    return geofence;
+    if (error) throw error;
+
+    return {
+      id: data.id,
+      name: data.name,
+      latitude: data.latitude,
+      longitude: data.longitude,
+      radius: data.radius,
+      userId: data.user_id,
+      enabled: data.enabled,
+    };
   }
 
   async deleteGeofence(geofenceId: string): Promise<void> {
-    this.geofences = this.geofences.filter(g => g.id !== geofenceId);
+    const { error } = await this.supabase
+      .from('geofences')
+      .delete()
+      .eq('id', geofenceId);
+
+    if (error) throw error;
+  }
+
+  async toggleGhostMode(userId: string, enabled: boolean): Promise<void> {
+    const { error } = await this.supabase
+      .from('user_profiles')
+      .update({ ghost_mode: enabled })
+      .eq('id', userId);
+
+    if (error) throw error;
   }
 
   calculateDistance(
@@ -88,16 +174,18 @@ class LocationService {
     return R * c;
   }
 
-  // Mock GPS simulation for demo
-  simulateLocationUpdate(userId: string): void {
-    const current = this.locations[userId];
-    if (!current) return;
-
-    // Random small movement (±0.001 degrees ≈ 100m)
-    const newLat = current.latitude + (Math.random() - 0.5) * 0.001;
-    const newLon = current.longitude + (Math.random() - 0.5) * 0.001;
-
-    this.updateLocation(userId, newLat, newLon, 10);
+  checkGeofence(
+    userLat: number,
+    userLon: number,
+    geofence: Geofence
+  ): boolean {
+    const distance = this.calculateDistance(
+      userLat,
+      userLon,
+      geofence.latitude,
+      geofence.longitude
+    );
+    return distance <= geofence.radius;
   }
 }
 

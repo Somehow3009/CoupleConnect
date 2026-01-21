@@ -1,19 +1,25 @@
 import { useState, useEffect } from 'react';
 import { Moment } from '@/types';
 import { momentService } from '@/services/momentService';
+import { useAuth } from '@/template';
 
 export function useMoments() {
+  const { user } = useAuth();
   const [moments, setMoments] = useState<Moment[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadMoments();
-  }, []);
+    if (user) {
+      loadMoments();
+    }
+  }, [user]);
 
   const loadMoments = async () => {
+    if (!user) return;
+    
     try {
       setLoading(true);
-      const data = await momentService.getMoments();
+      const data = await momentService.getMoments(user.id);
       setMoments(data);
     } catch (err) {
       console.error('Failed to load moments:', err);
@@ -22,9 +28,11 @@ export function useMoments() {
     }
   };
 
-  const createMoment = async (imageUrl: string, caption?: string) => {
+  const createMoment = async (imageUri: string, caption?: string) => {
+    if (!user) throw new Error('Not authenticated');
+    
     try {
-      const moment = await momentService.createMoment(imageUrl, caption);
+      const moment = await momentService.createMoment(user.id, imageUri, caption);
       setMoments(prev => [moment, ...prev]);
       return moment;
     } catch (err) {
@@ -34,8 +42,10 @@ export function useMoments() {
   };
 
   const addReaction = async (momentId: string, emoji: string) => {
+    if (!user) return;
+    
     try {
-      await momentService.addReaction(momentId, emoji);
+      await momentService.addReaction(momentId, user.id, emoji);
       await loadMoments();
     } catch (err) {
       console.error('Failed to add reaction:', err);
@@ -43,8 +53,10 @@ export function useMoments() {
   };
 
   const removeReaction = async (momentId: string) => {
+    if (!user) return;
+    
     try {
-      await momentService.removeReaction(momentId);
+      await momentService.removeReaction(momentId, user.id);
       await loadMoments();
     } catch (err) {
       console.error('Failed to remove reaction:', err);
@@ -52,8 +64,10 @@ export function useMoments() {
   };
 
   const addComment = async (momentId: string, content: string) => {
+    if (!user) throw new Error('Not authenticated');
+    
     try {
-      await momentService.addComment(momentId, content);
+      await momentService.addComment(momentId, user.id, content);
       await loadMoments();
     } catch (err) {
       console.error('Failed to add comment:', err);

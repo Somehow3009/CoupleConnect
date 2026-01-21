@@ -9,6 +9,15 @@ export function useMessages(chatId: string, currentUserId: string) {
 
   useEffect(() => {
     loadMessages();
+    
+    // Subscribe to real-time updates
+    const subscription = chatService.subscribeToMessages(chatId, (newMessage) => {
+      setMessages(prev => [...prev, newMessage]);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [chatId]);
 
   const loadMessages = async () => {
@@ -37,7 +46,7 @@ export function useMessages(chatId: string, currentUserId: string) {
         content,
         mediaUrl
       );
-      setMessages(prev => [...prev, message]);
+      // Don't add to local state - will be added via subscription
       return message;
     } catch (err) {
       console.error('Failed to send message:', err);

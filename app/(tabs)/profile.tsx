@@ -5,26 +5,41 @@ import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
-import { mockCurrentUser } from '@/services/mockData';
 import { spacing, typography, borderRadius, shadows } from '@/constants/theme';
 import { useTheme } from '@/hooks/useTheme';
-import { useAlert } from '@/template';
+import { useAlert, useAuth } from '@/template';
+import { useLocations } from '@/hooks/useLocations';
 
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { showAlert } = useAlert();
+  const { user, logout } = useAuth();
   const { colors, preferences, isDark } = useTheme();
-  const [user, setUser] = useState(mockCurrentUser);
+  const { toggleGhostMode } = useLocations();
+  const [ghostMode, setGhostMode] = useState(false);
+  const [locationSharing, setLocationSharing] = useState(true);
 
   const handleLogout = () => {
     showAlert('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: () => {
-        showAlert('Success', 'Logged out successfully');
+      { text: 'Logout', style: 'destructive', onPress: async () => {
+        await logout();
       }},
     ]);
   };
+
+  const handleGhostModeToggle = async (value: boolean) => {
+    setGhostMode(value);
+    try {
+      await toggleGhostMode(value);
+    } catch (err) {
+      showAlert('Error', 'Failed to update ghost mode');
+      setGhostMode(!value);
+    }
+  };
+
+  if (!user) return null;
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
@@ -32,17 +47,16 @@ export default function ProfileScreen() {
         {/* Header */}
         <View style={[styles.header, { paddingTop: insets.top, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <Text style={[styles.title, { color: colors.textPrimary }]}>Profile</Text>
-          <Pressable style={styles.iconButton}>
-            <MaterialIcons name="settings" size={24} color={colors.textPrimary} />
+          <Pressable style={styles.iconButton} onPress={() => router.push('/friends' as any)}>
+            <MaterialIcons name="person-add" size={24} color={colors.textPrimary} />
           </Pressable>
         </View>
 
         {/* Profile Info */}
         <View style={[styles.profileSection, { backgroundColor: colors.surface }]}>
           <Avatar uri={user.avatar} size={80} showOnline isOnline />
-          <Text style={[styles.displayName, { color: colors.textPrimary }]}>{user.displayName}</Text>
-          <Text style={[styles.username, { color: colors.textSecondary }]}>@{user.username}</Text>
-          {user.bio && <Text style={[styles.bio, { color: colors.textSecondary }]}>{user.bio}</Text>}
+          <Text style={[styles.displayName, { color: colors.textPrimary }]}>{user.username || 'User'}</Text>
+          <Text style={[styles.username, { color: colors.textSecondary }]}>{user.email}</Text>
           
           <Button
             title="Edit Profile"
@@ -56,7 +70,7 @@ export default function ProfileScreen() {
         {/* Theme Settings */}
         <Pressable 
           style={[styles.themeCard, { backgroundColor: colors.surface }]}
-          onPress={() => router.push('/theme-settings')}
+          onPress={() => router.push('/theme-settings' as any)}
         >
           <View style={styles.themeCardLeft}>
             <View style={[styles.themeIcon, { backgroundColor: colors.primary }]}>
@@ -84,10 +98,10 @@ export default function ProfileScreen() {
               <Text style={[styles.settingText, { color: colors.textPrimary }]}>Location Sharing</Text>
             </View>
             <Switch
-              value={user.locationSharing}
-              onValueChange={value => setUser({ ...user, locationSharing: value })}
+              value={locationSharing}
+              onValueChange={setLocationSharing}
               trackColor={{ false: colors.border, true: colors.primaryLight }}
-              thumbColor={user.locationSharing ? colors.primary : colors.surface}
+              thumbColor={locationSharing ? colors.primary : colors.surface}
             />
           </View>
 
@@ -97,10 +111,10 @@ export default function ProfileScreen() {
               <Text style={[styles.settingText, { color: colors.textPrimary }]}>Ghost Mode</Text>
             </View>
             <Switch
-              value={user.ghostMode}
-              onValueChange={value => setUser({ ...user, ghostMode: value })}
+              value={ghostMode}
+              onValueChange={handleGhostModeToggle}
               trackColor={{ false: colors.border, true: colors.primaryLight }}
-              thumbColor={user.ghostMode ? colors.primary : colors.surface}
+              thumbColor={ghostMode ? colors.primary : colors.surface}
             />
           </View>
 
